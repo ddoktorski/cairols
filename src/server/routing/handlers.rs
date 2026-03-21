@@ -33,6 +33,7 @@ use serde_json::{Value, json};
 use tracing::{error, trace};
 
 use crate::ide::code_lens::{CodeLensController, FileChange};
+use crate::ide::completion::manifest::is_scarb_manifest;
 use crate::lang::lsp::LsProtoGroup;
 use crate::lsp::ext::{
     ExpandMacro, ProvideVirtualFile, ProvideVirtualFileRequest, ProvideVirtualFileResponse,
@@ -700,8 +701,4 @@ impl BackgroundDocumentRequestHandler for InlayHintRequest {
 
 pub fn is_cairo_file_path(file_path: &Url) -> bool {
     file_path.path().ends_with(".cairo")
-}
-
-pub fn is_scarb_manifest(uri: &Url) -> bool {
-    uri.path().ends_with("Scarb.toml")
 }

@@ -181,21 +181,19 @@ pub fn collect_dynamic_registrations(
         },
     ];
     // .toml files are added here to properly trigger project updates on opening the files in the editor.
-    let sync_document_selector = Some(
-        chain!(
-            cairo_files_filters.clone(),
-            vec![DocumentFilter {
-                language: Some("toml".to_string()),
-                scheme: Some("file".to_string()),
-                pattern: Some("**/Scarb.toml".to_string()),
-            },]
-        )
-        .collect_vec(),
-    );
+    let sync_document_selector = chain!(
+        cairo_files_filters.clone(),
+        vec![DocumentFilter {
+            language: Some("toml".to_string()),
+            scheme: Some("file".to_string()),
+            pattern: Some("**/Scarb.toml".to_string()),
+        },]
+    )
+    .collect_vec();
     let text_document_registration_options =
         TextDocumentRegistrationOptions { document_selector: Some(cairo_files_filters.clone()) };
     let open_text_document_registration_options =
-        TextDocumentRegistrationOptions { document_selector: sync_document_selector.clone() };
+        TextDocumentRegistrationOptions { document_selector: Some(sync_document_selector.clone()) };
 
     if client_capabilities.did_change_watched_files_dynamic_registration() {
         // Register patterns for the client file watcher.
@@ -222,7 +220,7 @@ pub fn collect_dynamic_registrations(
         registrations.push(create_registration(
             DidChangeTextDocument::METHOD,
             TextDocumentChangeRegistrationOptions {
-                document_selector: Some(cairo_files_filters.clone()),
+                document_selector: Some(sync_document_selector.clone()),
                 sync_kind: 1, // TextDocumentSyncKind::FULL
             },
         ));
@@ -231,7 +229,7 @@ pub fn collect_dynamic_registrations(
             DidSaveTextDocument::METHOD,
             TextDocumentSaveRegistrationOptions {
                 include_text: Some(false),
-                text_document_registration_options: text_document_registration_options.clone(),
+                text_document_registration_options: open_text_document_registration_options.clone(),
             },
         ));
 
@@ -243,7 +241,7 @@ pub fn collect_dynamic_registrations(
 
     if client_capabilities.completion_dynamic_registration() {
         let registration_options = CompletionRegistrationOptions {
-            text_document_registration_options: text_document_registration_options.clone(),
+            text_document_registration_options: open_text_document_registration_options.clone(),
             completion_options: CompletionOptions {
                 resolve_provider: Some(false),
                 trigger_characters: Some(vec![".".to_string(), ":".to_string()]),

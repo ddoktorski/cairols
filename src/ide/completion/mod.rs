@@ -5,6 +5,7 @@ use std::collections::hash_map::Entry;
 use attribute::attribute_completions;
 use attribute::derive::derive_completions;
 use cairo_lang_diagnostics::ToOption;
+use cairo_lang_filesystem::db::FilesGroup;
 use cairo_lang_filesystem::span::TextPosition;
 use cairo_lang_parser::db::ParserGroup;
 use cairo_lang_syntax::node::ast;
@@ -28,6 +29,7 @@ use crate::ide::completion::expr::macro_call::{
 use crate::ide::completion::helpers::item::{
     CompletionItemHashable, CompletionItemOrderable, CompletionRelevance,
 };
+use crate::ide::completion::manifest::is_scarb_manifest;
 use crate::ide::completion::mod_item::mod_completions;
 use crate::ide::completion::use_statement::use_completions;
 use crate::lang::analysis_context::AnalysisContext;
@@ -40,6 +42,7 @@ mod dot_completions;
 mod expr;
 mod function;
 mod helpers;
+pub mod manifest;
 mod mod_item;
 mod path;
 mod pattern;
@@ -49,7 +52,14 @@ mod use_statement;
 
 /// Compute completion items at a given cursor position.
 pub fn complete(params: CompletionParams, db: &AnalysisDatabase) -> Option<CompletionResponse> {
+    if is_scarb_manifest(&params.text_document_position.text_document.uri) {
+        let file_id = db.file_for_url(&params.text_document_position.text_document.uri)?;
+        let content = db.file_content(file_id)?;
+        return manifest::manifest_completions(params, content);
+    }
+
     let text_document_position = params.text_document_position;
+
     let file_id = db.file_for_url(&text_document_position.text_document.uri)?;
     let mut position = text_document_position.position;
     let base_position_node = db.find_syntax_node_at_position(file_id, position.to_cairo())?;

@@ -82,6 +82,13 @@ tracing = "0.1"
 tracing-chrome = "0.7.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 which = "8"
+lsp-async-stub = "0.7.0"
+regex = "1"
+taplo = "0.14.0"
+taplo-common = { version = "0.6.0", features = ["schema", "reqwest"] }
+taplo-lsp = "0.8.0"
+tokio = { version = "1", features = ["rt"] }
+reqwest = { version = "0.11", default-features = false }
 toml_edit = "0.25.3"
 
 [target.'cfg(target_vendor = "apple")'.dependencies]
