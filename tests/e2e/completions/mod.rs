@@ -14,6 +14,7 @@ mod attribute;
 mod doc_links;
 mod dot;
 mod macros;
+mod manifest;
 mod methods_text_edits;
 mod mod_file;
 mod order;
@@ -23,6 +24,22 @@ mod structs;
 mod traits;
 mod uses;
 mod vars_and_params;
+
+pub(crate) struct ManifestCompletion;
+
+impl Transformer for ManifestCompletion {
+    fn capabilities(base: lsp_types::ClientCapabilities) -> lsp_types::ClientCapabilities {
+        base
+    }
+
+    fn transform(ls: MockClient, cursors: Cursors, _config: Option<serde_json::Value>) -> String {
+        transform(ls, cursors, Self::main_file())
+    }
+
+    fn main_file() -> &'static str {
+        "Scarb.toml"
+    }
+}
 
 impl Transformer for Completion {
     fn capabilities(base: lsp_types::ClientCapabilities) -> lsp_types::ClientCapabilities {
