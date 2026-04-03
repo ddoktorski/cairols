@@ -38,24 +38,25 @@ use crate::lang::importer::new_import_edit;
 use crate::lang::text_matching::text_matches;
 use crate::lang::visibility::peek_visible_in_with_edition;
 
-/// Treats provided path as suffix, proposing importable elements that can prefix this path.
+/// Proposes importable items whose full path ends with the typed text.
+///
+/// "Suffix" refers to the typed text being matched against the **end** of known importable paths:
+/// e.g. typing `ArrayTrait` surfaces `core::array::ArrayTrait` as a candidate to import.
 /// Used internally and by [`macro_call`] for filtering by importable kind.
 pub(crate) fn importable_path_suffix_completions<'db>(
     db: &'db AnalysisDatabase,
     ctx: &'db AnalysisContext<'db>,
     was_node_corrected: bool,
 ) -> Vec<ImportableCompletionItem<'db>> {
-    let importables = if let Some(importables) =
+    let Some(importables) =
         get_importables_for_path_suffix_completions(db, ctx, was_node_corrected)
-    {
-        importables
-    } else {
+    else {
         return Default::default();
     };
 
-    let (typed_text, last_typed_segment) = match get_typed_text_and_last_segment(db, ctx) {
-        (Some(typed_text), Some(last_typed_segment)) => (typed_text, last_typed_segment),
-        _ => return Default::default(),
+    let (Some(typed_text), Some(last_typed_segment)) = get_typed_text_and_last_segment(db, ctx)
+    else {
+        return Default::default();
     };
 
     let current_crate = ctx.module_id.owning_crate(db);
@@ -77,27 +78,30 @@ pub(crate) fn importable_path_suffix_completions<'db>(
         .collect()
 }
 
-/// Treats provided path as suffix, proposing elements that can prefix this path.
+/// Proposes completions for an unresolved path expression. Combines two strategies:
 ///
-/// Also handles trait/impl item completions inside expression blocks:
-/// - Single-segment (`Name<caret>`): proposes `TraitName::item` / `ImplName::item` completions.
-/// - Multi-segment ending in `::` (`MyTrait::<caret>`): proposes bare `item_name` completions.
+/// - **Suffix match** (same as [`importable_path_suffix_completions`]): the typed text is matched
+///   against the end of known importable paths, surfacing items that can be imported and prefixed
+///   to it. "Suffix" means the typed text is a suffix of a full importable path.
+///
+/// - **Trait/impl item expansion** (expression blocks only): the typed text is treated as a
+///   prefix that identifies a trait or impl, then proposes the items that follow `::`.
+///   - Single-segment (`Name<caret>`): proposes `TraitName::item` / `ImplName::item`.
+///   - Multi-segment ending in `::` (`MyTrait::<caret>`): proposes bare `item_name`.
 pub fn path_suffix_completions<'db>(
     db: &'db AnalysisDatabase,
     ctx: &'db AnalysisContext<'db>,
     was_node_corrected: bool,
 ) -> Vec<CompletionItemOrderable> {
-    let importables = if let Some(importables) =
+    let Some(importables) =
         get_importables_for_path_suffix_completions(db, ctx, was_node_corrected)
-    {
-        importables
-    } else {
+    else {
         return Default::default();
     };
 
-    let (typed_text, last_typed_segment) = match get_typed_text_and_last_segment(db, ctx) {
-        (Some(typed_text), Some(last_typed_segment)) => (typed_text, last_typed_segment),
-        _ => return Default::default(),
+    let (Some(typed_text), Some(last_typed_segment)) = get_typed_text_and_last_segment(db, ctx)
+    else {
+        return Default::default();
     };
 
     let current_crate = ctx.module_id.owning_crate(db);
@@ -121,17 +125,17 @@ pub fn path_suffix_completions<'db>(
 
     // Trait/impl item suffix completions — only meaningful inside expression blocks.
     if ctx.node.ancestor_of_kind(db, SyntaxKind::ExprBlock).is_some() {
-        let last_typed = last_typed_segment.to_string(db);
+        let last_typed_segment = last_typed_segment.to_string(db);
         if typed_text.is_empty() {
             suffix_completions_by_name(
                 db,
                 ctx,
                 &importables,
-                &last_typed,
+                &last_typed_segment,
                 current_crate,
                 &mut result,
             );
-        } else if last_typed.is_empty() {
+        } else if last_typed_segment.is_empty() {
             suffix_completions_by_path(
                 db,
                 ctx,
@@ -146,7 +150,11 @@ pub fn path_suffix_completions<'db>(
     result
 }
 
-/// Treats provided path as prefix, proposing elements that should go next.
+/// Proposes completions for the next segment of a resolvable path.
+///
+/// "Prefix" means the typed path is successfully resolved as the beginning of a longer path,
+/// and this function returns what can legally follow it. e.g. typing `core::array::` resolves
+/// that module and proposes its members.
 pub fn path_prefix_completions<'db>(
     db: &'db AnalysisDatabase,
     ctx: &AnalysisContext<'db>,
@@ -407,12 +415,13 @@ fn trait_items_prefix_completions<'db>(
 }
 
 /// Handles the single-segment suffix case: typing `Name<caret>` proposes
-/// `TraitName::item_name` or `ImplName::item_name`.
+/// `TraitName::item_name` or `ImplName::item_name` completions for items
+/// (functions, types, constants) of matching traits and impls.
 fn suffix_completions_by_name<'db>(
     db: &'db AnalysisDatabase,
     ctx: &'db AnalysisContext<'db>,
     importables: &OrderedHashMap<ImportableId<'db>, String>,
-    last_typed: &str,
+    last_typed_segment: &str,
     current_crate: CrateId<'db>,
     result: &mut Vec<CompletionItemOrderable>,
 ) {
@@ -432,30 +441,27 @@ fn suffix_completions_by_name<'db>(
             _ => continue,
         };
 
-        // Only propose items for traits/impls defined in the current crate to avoid noise
-        // from corelib/external crate items (e.g., typing "ba" should not suggest AddAssign::add).
-        if crate_id != current_crate {
+        // Exclude core-library traits/impls to avoid noise
+        // (e.g., typing "ba" should not suggest AddAssign::add).
+        let is_core = *crate_id.long(db) == CrateLongId::core(db);
+        if is_core {
             continue;
         }
 
-        let is_core = *crate_id.long(db) == CrateLongId::core(db);
-
-        // Determine if the item needs an import (path contains `::` means it's not locally
-        // visible by its short name).
         let needs_import = item_path.contains("::");
         let import_edit =
             if needs_import { new_import_edit(db, ctx, item_path.clone()) } else { None };
 
         let relevance = get_item_relevance(!needs_import, crate_id == current_crate, is_core);
 
-        let prefix_name_matches = text_matches(&prefix_name, last_typed);
+        let prefix_name_matches = text_matches(&prefix_name, last_typed_segment);
 
         // Functions
         for (item_name, trait_function_id) in
             db.trait_functions(trait_id).cloned().unwrap_or_default().iter()
         {
             let item_name_str = item_name.to_string(db);
-            if !prefix_name_matches && !text_matches(&item_name_str, last_typed) {
+            if !prefix_name_matches && !text_matches(&item_name_str, last_typed_segment) {
                 continue;
             }
 
@@ -487,7 +493,7 @@ fn suffix_completions_by_name<'db>(
         // Types
         for (item_name, _) in db.trait_types(trait_id).cloned().unwrap_or_default().iter() {
             let item_name_str = item_name.to_string(db);
-            if !prefix_name_matches && !text_matches(&item_name_str, last_typed) {
+            if !prefix_name_matches && !text_matches(&item_name_str, last_typed_segment) {
                 continue;
             }
 
@@ -511,7 +517,7 @@ fn suffix_completions_by_name<'db>(
             db.trait_constants(trait_id).cloned().unwrap_or_default().iter()
         {
             let item_name_str = item_name.to_string(db);
-            if !prefix_name_matches && !text_matches(&item_name_str, last_typed) {
+            if !prefix_name_matches && !text_matches(&item_name_str, last_typed_segment) {
                 continue;
             }
 
@@ -540,7 +546,7 @@ fn suffix_completions_by_path<'db>(
     db: &'db AnalysisDatabase,
     ctx: &'db AnalysisContext<'db>,
     importables: &OrderedHashMap<ImportableId<'db>, String>,
-    typed_text: &[SmolStrId<'db>],
+    typed_segments: &[SmolStrId<'db>],
     current_crate: CrateId<'db>,
     result: &mut Vec<CompletionItemOrderable>,
 ) {
@@ -557,13 +563,13 @@ fn suffix_completions_by_path<'db>(
         let path_segments: Vec<&str> = item_path.split("::").collect();
 
         // The typed segments must match the last N segments of the path (suffix match).
-        if typed_text.len() > path_segments.len() {
+        if typed_segments.len() > path_segments.len() {
             continue;
         }
-        let path_suffix = &path_segments[path_segments.len() - typed_text.len()..];
+        let path_suffix = &path_segments[path_segments.len() - typed_segments.len()..];
         let matches = path_suffix
             .iter()
-            .zip(typed_text.iter())
+            .zip(typed_segments.iter())
             .all(|(ps, ts)| *ps == ts.to_string(db).as_str());
         if !matches {
             continue;
