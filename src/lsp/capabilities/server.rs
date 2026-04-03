@@ -13,6 +13,7 @@
 
 use std::ops::Not;
 
+use itertools::{Itertools, chain};
 use lsp_types::notification::{
     DidChangeTextDocument, DidChangeWatchedFiles, DidCloseTextDocument, DidOpenTextDocument,
     DidSaveTextDocument, Notification,
@@ -46,6 +47,7 @@ use serde::Serialize;
 use crate::ide::semantic_highlighting::SemanticTokenKind;
 use crate::lsp::capabilities::client::ClientCapabilitiesExt;
 use crate::lsp::ext::ViewSyntaxTree;
+use crate::server::commands::ServerCommand;
 
 /// Returns capabilities the server wants to register statically.
 pub fn collect_server_capabilities(client_capabilities: &ClientCapabilities) -> ServerCapabilities {
@@ -103,7 +105,10 @@ pub fn collect_server_capabilities(client_capabilities: &ClientCapabilities) -> 
             .execute_command_dynamic_registration()
             .not()
             .then(|| ExecuteCommandOptions {
-                commands: vec!["cairo.reload".to_string(), "cairo.executeCodeLens".to_string()],
+                commands: vec![
+                    ServerCommand::Reload.as_str().to_string(),
+                    ServerCommand::ExecuteCodeLens.as_str().to_string(),
+                ],
                 work_done_progress_options: Default::default(),
             }),
         semantic_tokens_provider: client_capabilities
@@ -167,7 +172,7 @@ pub fn collect_dynamic_registrations(
     let mut registrations = vec![];
 
     // Relevant files.
-    let document_selector = Some(vec![
+    let cairo_files_filters = vec![
         DocumentFilter {
             language: Some("cairo".to_string()),
             scheme: Some("file".to_string()),
@@ -178,9 +183,23 @@ pub fn collect_dynamic_registrations(
             scheme: Some("vfs".to_string()),
             pattern: None,
         },
-    ]);
+    ];
+    // .toml files are added here to properly trigger project updates on opening the files in the editor.
+    let sync_document_selector = Some(
+        chain!(
+            cairo_files_filters.clone(),
+            vec![DocumentFilter {
+                language: Some("toml".to_string()),
+                scheme: Some("file".to_string()),
+                pattern: Some("**/Scarb.toml".to_string()),
+            },]
+        )
+        .collect_vec(),
+    );
     let text_document_registration_options =
-        TextDocumentRegistrationOptions { document_selector: document_selector.clone() };
+        TextDocumentRegistrationOptions { document_selector: Some(cairo_files_filters.clone()) };
+    let open_text_document_registration_options =
+        TextDocumentRegistrationOptions { document_selector: sync_document_selector.clone() };
 
     if client_capabilities.did_change_watched_files_dynamic_registration() {
         // Register patterns for the client file watcher.
@@ -201,13 +220,13 @@ pub fn collect_dynamic_registrations(
     if client_capabilities.text_document_synchronization_dynamic_registration() {
         registrations.push(create_registration(
             DidOpenTextDocument::METHOD,
-            &text_document_registration_options,
+            &open_text_document_registration_options,
         ));
 
         registrations.push(create_registration(
             DidChangeTextDocument::METHOD,
             TextDocumentChangeRegistrationOptions {
-                document_selector,
+                document_selector: Some(cairo_files_filters.clone()),
                 sync_kind: 1, // TextDocumentSyncKind::FULL
             },
         ));
@@ -243,9 +262,15 @@ pub fn collect_dynamic_registrations(
 
     if client_capabilities.execute_command_dynamic_registration() {
         let registration_options = ExecuteCommandRegistrationOptions {
-            commands: vec!["cairo.reload".to_string(), "cairo.executeCodeLens".to_string()],
+            commands: vec![
+                ServerCommand::Reload.as_str().to_string(),
+                ServerCommand::ExecuteCodeLens.as_str().to_string(),
+            ],
             execute_command_options: ExecuteCommandOptions {
-                commands: vec!["cairo.reload".to_string(), "cairo.executeCodeLens".to_string()],
+                commands: vec![
+                    ServerCommand::Reload.as_str().to_string(),
+                    ServerCommand::ExecuteCodeLens.as_str().to_string(),
+                ],
                 work_done_progress_options: Default::default(),
             },
         };

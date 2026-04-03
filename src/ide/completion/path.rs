@@ -26,6 +26,7 @@ use crate::ide::completion::helpers::binary_expr::dot_rhs::dot_expr_rhs;
 use crate::ide::completion::helpers::formatting::{
     format_enum_variant, generate_abbreviated_signature,
 };
+use crate::ide::completion::helpers::is_empty_body_context;
 use crate::ide::completion::helpers::item::{
     CompletionItemOrderable, ImportableCompletionItem, ImportableCompletionItemHashable,
     get_item_relevance,
@@ -54,9 +55,12 @@ pub(crate) fn importable_path_suffix_completions<'db>(
         return Default::default();
     };
 
-    let (Some(typed_text), Some(last_typed_segment)) = get_typed_text_and_last_segment(db, ctx)
-    else {
-        return Default::default();
+    let is_empty_body_context = is_empty_body_context(db, &ctx.node);
+
+    let (typed_text, last_typed_segment) = match get_typed_text_and_last_segment(db, ctx) {
+        (Some(typed_text), Some(last_typed_segment)) => (typed_text, last_typed_segment),
+        _ if is_empty_body_context => (vec![], SmolStrId::from(db, "")),
+        _ => return Default::default(),
     };
 
     let current_crate = ctx.module_id.owning_crate(db);
@@ -441,12 +445,7 @@ fn suffix_completions_by_name<'db>(
             _ => continue,
         };
 
-        // Exclude core-library traits/impls to avoid noise
-        // (e.g., typing "ba" should not suggest AddAssign::add).
         let is_core = *crate_id.long(db) == CrateLongId::core(db);
-        if is_core {
-            continue;
-        }
 
         let needs_import = item_path.contains("::");
         let import_edit =
