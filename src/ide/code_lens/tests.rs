@@ -10,11 +10,13 @@ use cairo_lang_defs::plugin::MacroPlugin;
 use cairo_lang_filesystem::db::FilesGroup;
 use cairo_lang_filesystem::db::get_originating_location;
 use cairo_lang_filesystem::ids::CrateId;
+use cairo_lang_filesystem::ids::SmolStrId;
 use cairo_lang_filesystem::ids::SpanInFile;
 use cairo_lang_filesystem::span::TextPositionSpan;
 use cairo_lang_semantic::lsp_helpers::LspHelpers;
+use cairo_lang_syntax::node::helpers::QueryAttrs;
 use cairo_lang_syntax::node::ids::SyntaxStablePtrId;
-use cairo_lang_syntax::node::{TypedStablePtr, TypedSyntaxNode, ast::ModuleItem};
+use cairo_lang_syntax::node::{TypedStablePtr, TypedSyntaxNode, ast::Attribute, ast::ModuleItem};
 use cairo_lang_test_plugin::TestPlugin;
 use cairo_lang_utils::Intern;
 use cairo_language_common::CommonGroup;
@@ -31,6 +33,10 @@ use crate::lang::lsp::ToLsp;
 use crate::lang::lsp::{LsProtoGroup, ToCairo};
 use crate::server::client::Notifier;
 use crate::state::State;
+
+const TEST_EXECUTABLES: [&str; 2] = ["test", "snforge_internal_test_executable"];
+const FUZZER_ATTR: &str = "fuzzer";
+const TEST_CASE_ATTR: &str = "test_case";
 
 #[derive(PartialEq, Clone, Debug)]
 pub struct TestCodeLens {
@@ -91,13 +97,26 @@ pub fn get_full_path_and_module_id<'db>(
 pub struct TestCodeLensInternal {
     pub full_path: String,
     pub is_on_mod: bool,
+    pub is_fuzzer: bool,
     pub range: Range,
     pub file_url: Url,
 }
 
 impl TestCodeLensInternal {
-    fn new(range: Range, full_path: String, file_url: Url, is_on_mod: bool) -> Self {
-        Self { full_path: sanitize_test_case_name(&full_path), is_on_mod, file_url, range }
+    fn new(
+        range: Range,
+        full_path: String,
+        file_url: Url,
+        is_on_mod: bool,
+        is_fuzzer: bool,
+    ) -> Self {
+        Self {
+            full_path: sanitize_test_case_name(&full_path),
+            is_on_mod,
+            is_fuzzer,
+            file_url,
+            range,
+        }
     }
 }
 
@@ -245,7 +264,6 @@ impl TestRunner {
     }
 }
 
-const TEST_EXECUTABLES: [&str; 2] = ["test", "snforge_internal_test_executable"];
 fn collect_test_functions<'db>(
     db: &'db AnalysisDatabase,
     module: ModuleId<'db>,
@@ -260,10 +278,19 @@ fn collect_test_lenses<'db>(
     file_url: Url,
 ) {
     for node in collect_test_functions(db, module) {
+        let attribute_ptr = node.attribute_ptr;
         maybe_push_code_lens(
             db,
             file_code_lens,
-            |range, full_path| TestCodeLensInternal::new(range, full_path, file_url.clone(), false),
+            |range, full_path| {
+                TestCodeLensInternal::new(
+                    range,
+                    full_path,
+                    file_url.clone(),
+                    false,
+                    is_fuzzer_test(db, attribute_ptr),
+                )
+            },
             node,
         );
     }
@@ -298,7 +325,7 @@ fn collect_test_lenses<'db>(
                 db,
                 file_code_lens,
                 |range, full_path| {
-                    TestCodeLensInternal::new(range, full_path, file_url.clone(), true)
+                    TestCodeLensInternal::new(range, full_path, file_url.clone(), true, false)
                 },
                 module_node,
             );
@@ -344,6 +371,38 @@ fn maybe_push_code_lens(
 
         file_state.push(lens_builder)
     }
+}
+
+fn is_fuzzer_test(db: &AnalysisDatabase, ptr: SyntaxStablePtrId) -> bool {
+    let SpanInFile { file_id, span } = get_originating_location(
+        db,
+        SpanInFile { file_id: ptr.file_id(db), span: ptr.lookup(db).span_without_trivia(db) },
+        None,
+    );
+
+    let Some(original_node) = db.find_syntax_node_at_offset(file_id, span.start) else {
+        return false;
+    };
+
+    // We do not want to skip test cases.
+    // `#[test_case]` generates a new test with `#[snforge_internal_test_executable]`
+    // directly so it is okay to test for it as an ancestor.
+    if original_node
+        .ancestor_of_type::<Attribute>(db)
+        .map(|attr| {
+            attr.attr(db).as_syntax_node().get_text_without_trivia(db)
+                == SmolStrId::from(db, TEST_CASE_ATTR)
+        })
+        .unwrap_or(false)
+    {
+        return false;
+    }
+
+    original_node
+        .ancestors_with_self(db)
+        .find_map(|n| ModuleItem::cast(db, n))
+        .map(|module_item| module_item.find_attr(db, FUZZER_ATTR).is_some())
+        .unwrap_or(false)
 }
 
 // Copied from starknet-foundry
