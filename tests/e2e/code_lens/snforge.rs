@@ -281,12 +281,6 @@ fn test_case_with_fuzzer() {
     "#, @r#"
     [[lenses]]
     line = 0
-    command = "▶ Debug test"
-    file_path = "src/lib.cairo"
-    index = 3
-
-    [[lenses]]
-    line = 0
     command = "▶ Run test"
     file_path = "src/lib.cairo"
     index = 0
@@ -295,7 +289,7 @@ fn test_case_with_fuzzer() {
     line = 2
     command = "▶ Debug test"
     file_path = "src/lib.cairo"
-    index = 4
+    index = 3
 
     [[lenses]]
     line = 2
@@ -307,7 +301,7 @@ fn test_case_with_fuzzer() {
     line = 3
     command = "▶ Debug test"
     file_path = "src/lib.cairo"
-    index = 5
+    index = 4
 
     [[lenses]]
     line = 3
@@ -336,12 +330,6 @@ fn fuzzer_with_test_case() {
     "#, @r#"
     [[lenses]]
     line = 0
-    command = "▶ Debug test"
-    file_path = "src/lib.cairo"
-    index = 3
-
-    [[lenses]]
-    line = 0
     command = "▶ Run test"
     file_path = "src/lib.cairo"
     index = 0
@@ -350,7 +338,7 @@ fn fuzzer_with_test_case() {
     line = 2
     command = "▶ Debug test"
     file_path = "src/lib.cairo"
-    index = 4
+    index = 3
 
     [[lenses]]
     line = 2
@@ -362,7 +350,7 @@ fn fuzzer_with_test_case() {
     line = 3
     command = "▶ Debug test"
     file_path = "src/lib.cairo"
-    index = 5
+    index = 4
 
     [[lenses]]
     line = 3
@@ -371,8 +359,23 @@ fn fuzzer_with_test_case() {
     index = 2
 
     [[execute_in_terminal]]
-    command = "snforge test hello::a --exact --launch-debugger"
+    command = "snforge test hello::a --exact"
     cwd = "./"
+    "#)
+}
+
+#[test]
+fn fuzzer_without_test_case() {
+    test_transform!(test_code_lens_snforge, r#"
+    #[test]<caret>
+    #[fuzzer]
+    fn a(_a: felt252) {}
+    "#, @r#"
+    [[lenses]]
+    line = 0
+    command = "▶ Run test"
+    file_path = "src/lib.cairo"
+    index = 0
 
     [[execute_in_terminal]]
     command = "snforge test hello::a --exact"

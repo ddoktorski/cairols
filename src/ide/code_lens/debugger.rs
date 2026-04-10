@@ -70,7 +70,7 @@ impl TryFrom<&TestCodeLensInternal> for DebuggerLensInternal {
     type Error = ();
 
     fn try_from(value: &TestCodeLensInternal) -> Result<Self, Self::Error> {
-        if value.is_on_mod {
+        if value.is_on_mod || value.is_fuzzer {
             Err(())
         } else {
             Ok(Self {
